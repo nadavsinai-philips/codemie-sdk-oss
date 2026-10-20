@@ -1,0 +1,50 @@
+name: Package SDK repair
+
+on:
+  push:
+    tags:
+      - 'repair-sdk-v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/codemie-nodejs
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: '22'
+      - name: Validate tag and stamp package version
+        env:
+          REPAIR_TAG: ${{ github.ref_name }}
+        run: |
+          node -e 'const m=process.env.REPAIR_TAG.match(/^repair-sdk-v(\d+\.\d+\.\d+)-(\d+)$/); if(!m) throw new Error("Invalid repair tag"); require("node:fs").appendFileSync(process.env.GITHUB_ENV, "REPAIR_VERSION="+m[1]+"-repair."+m[2]+"\n");'
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test -- --runInBand
+      - name: Build and pack
+        run: |
+          npm pkg set "version=$REPAIR_VERSION" "gitHead=$GITHUB_SHA"
+          npm run build
+          npm pack --ignore-scripts
+          sha256sum ./*.tgz > SHA256SUMS
+      - name: Publish immutable GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPAIR_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$REPAIR_TAG" --verify-tag --title "SDK $REPAIR_VERSION" --notes "Tested package built from source commit $GITHUB_SHA. This release is distributed through GitHub assets and is not published to npm." ./*.tgz SHA256SUMS
